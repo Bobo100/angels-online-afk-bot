@@ -40,47 +40,66 @@ except:
     pass
 
 
-def match(IMSRC, IMOBJ):
-    pos = ac.find_template(IMSRC, IMOBJ)
+def match(IMSRC, IMOBJ, threshold=0.8):
+    # 確保圖片是彩色三通道
+    if len(IMSRC.shape) == 2:  # 灰階轉BGR
+        IMSRC = cv2.cvtColor(IMSRC, cv2.COLOR_GRAY2BGR)
+    if len(IMOBJ.shape) == 2:  # 灰階轉BGR
+        IMOBJ = cv2.cvtColor(IMOBJ, cv2.COLOR_GRAY2BGR)
+
+    pos = ac.find_template(IMSRC, IMOBJ, threshold=threshold, rgb=False)
     if pos is not None:
-        # print(pos)
-        point = pos['result']
-        # print(point)
-        pyautogui.moveTo(point)
-        # print("匹配成功：{}".format(IMSRC))
-        time.sleep(0.5)
-
-        cv2.rectangle(IMSRC, pos['rectangle'][0], pos['rectangle'][3], (0, 0, 255), 2)  # 红
-        
-        print(pos['rectangle'])
-
-        # plt.imshow(IMSRC)
-        # # plt.show()
-        # # return list(pos['rectangle'])
+        print(f"✅ 匹配成功，信心值 {pos['confidence']:.2f}，位置: {pos['result']}")
+        cv2.rectangle(IMSRC, pos['rectangle'][0], pos['rectangle'][3], (0, 0, 255), 2)
+        return pos
     else:
+        print("❌ 未匹配到")
         return None
 
-def position_return(screenshot, compare_object:str, x_offset:int = 10, y_offset:int = 10):
-    open_cv_image_np = np.array(screenshot)
-    IMSRC=open_cv_image_np
+def position_return(screenshot, compare_object: str, x_offset: int = 10, y_offset: int = 10):
+    IMSRC=np.array(screenshot)
     # 找比對
     IMOBJ=cv2.imread(compare_object)
     # print(type(IMOBJ))
     position = match(IMSRC,IMOBJ)
     if position is not None:
-        position_xy = str(position[0]).replace('(', '').replace(')', "").split(", ")
-        # 滑鼠要移動到的位置
-        x = int(position_xy[0]) + x_offset
-        y = int(position_xy[1]) + y_offset
-    
-        return (x, y)
+        x, y = position["result"]
+        return int(x + x_offset), int(y + y_offset)
     else:
         return (None, None)
-
+    
 def mouseclick():
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
     time.sleep(1)
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+    
+# === 核心：安全點擊，支援重試與信心值檢查 ===
+def safe_click(img_path, retries=5, threshold=0.75, delay=0.5):
+    for attempt in range(retries):
+        screenshot = pyautogui.screenshot()
+        IMSRC = np.array(screenshot)
+        IMOBJ = cv2.imread(img_path)
+        pos = match(IMSRC, IMOBJ, threshold)
+        if pos is not None:
+            x, y = map(int, pos['result'])
+            pyautogui.moveTo(x, y)
+            mouseclick()
+            print(f"✅ 已點擊 {img_path}")
+            time.sleep(delay)
+            # 二次確認
+            screenshot2 = pyautogui.screenshot()
+            IMSRC2 = np.array(screenshot2)
+            pos_check = match(IMSRC2, IMOBJ, threshold)
+            if pos_check is None:
+                print("🟢 按鈕成功消失，確認點擊有效。")
+                return True
+            else:
+                print("⚠️ 按鈕仍存在，可能點擊未成功，重試中...")
+        else:
+            print(f"❌ 第 {attempt+1} 次未找到 {img_path}")
+        time.sleep(1)
+    print(f"❌ 多次嘗試仍未能點擊 {img_path}")
+    return False
 
 def account(account_group: str):
     account_number = 0
@@ -119,154 +138,85 @@ def AutoOpen(account_group: str):
     # pyautogui.hotkey('winleft', 'd')
 
     empty_list()
+    if account_number == 0:
+        return
+    
+    for i in range(account_number):
+        print(f"🚀 啟動第 {i+1} 個帳號")
+        os.startfile(application_path)
+        time.sleep(3)
 
-    if(account_number!=0):
-        i=0
-        while(i < account_number):    
-            # 開啟遊戲exe
-            # os.startfile (r"C:\Users\Public\Desktop\天使之戀Online.lnk")
-            os.startfile(application_path)
-            application_path
+        # Step 1: 開始遊戲
+        if not safe_click("image/start game.png", retries=10, threshold=0.75):
+            print("⚠️ 找不到 start game.png，略過此帳號")
+            continue
+
+        # 等待登入畫面
+        waited = 0
+        while not safe_click("image/agree.png", retries=1) and waited < 60:
             time.sleep(3)
-            
-            # 開始遊戲按鈕
-            x, y = position_return(pyautogui.screenshot(), os.path.join(dirname, "image/start game.png"))
-            if all(item is None for item in [x, y]):
-                x, y = position_return(pyautogui.screenshot(), os.path.join(dirname, "image/start game.png"))
-            pyautogui.moveTo(x, y)
-            pyautogui.click(clicks=1)        
-            
-            time.sleep(60)
-            mouseclick()
+            waited += 3
+        if waited >= 60:
+            print("❌ 超時未找到 agree.png，略過此帳號")
+            continue
 
-            # 同意按鈕位置
-            x, y = position_return(pyautogui.screenshot(), os.path.join(dirname, "image/agree.png"))
-            if all(item is None for item in [x, y]):
-                mouseclick()
+        # Step 2: 切換輸入法
+        py_win_keyboard_layout.change_foreground_window_keyboard_layout(0x04090409)
 
-            pyautogui.moveTo(x, y)
-            mouseclick()
-            
-            time.sleep(2)
-            py_win_keyboard_layout.change_foreground_window_keyboard_layout(0x04090409)
+        # Step 3: 登入帳密
+        pyautogui.press('backspace', presses=15, interval=0.05)
+        pyautogui.write(myaccountlist.get(account_index))
+        time.sleep(1)
+        pydirectinput.press('tab')
+        pyautogui.write(mypasswordlist.get(account_index))
+        pyautogui.press("enter")
+        time.sleep(3)
+        pyautogui.press("enter")
+        time.sleep(3)
+        pyautogui.press("enter")
 
-            # 輸入帳號密碼
-            for x in range(0, 15):
-                pyautogui.press('backspace')            
-            pyautogui.write(myaccountlist.get(account_index))
-            time.sleep(3)
-            pydirectinput.press('tab')     
-            time.sleep(1)
-            pyautogui.write(mypasswordlist.get(account_index))            
-            pyautogui.press("enter")            
-            time.sleep(3)
-            pyautogui.press("enter")
-            time.sleep(3)
-            pyautogui.press("enter") 
-            
-            if data[account_index]['second_password'] != "":
-                pyautogui.write(data[account_index]['second_password'])
-            else:
-                pyautogui.press("enter")
-            
-            pyautogui.press("enter")
-            pyautogui.press("enter")           
-            time.sleep(4)
+        # Step 4: 第二組密碼
+        if data[account_index].get("second_password", ""):
+            pyautogui.write(data[account_index]["second_password"])
+        pyautogui.press("enter")
+        pyautogui.press("enter")
 
+        time.sleep(4)
+        
+        # Step 5: 新視窗偵測
+        alltitles = gw.getAllTitles()
+        global openlist, olderlist
+        for t in alltitles:
+            if "天使之戀Online - " in t:
+                openlist.append(t)
+        now_window_list = list(set(openlist) - set(olderlist))
+        openlist = list(set(openlist))
+        olderlist = copy.deepcopy(openlist)
+        now_window_name = gw.getWindowsWithTitle(now_window_list[0])[0]
 
-            # 取得當前視窗
-            alltitles = gw.getAllTitles()
-            global openlist
-            global olderlist
-            for t in alltitles:
-                # print(i)
-                if "天使之戀Online - " in t:
-                    openlist.append(t)
+        # Step 6: 自動攻擊啟動
+        safe_click("image/attackpage1.png", retries=8)
+        safe_click("image/autoattack.png", retries=8)
 
-            
-            now_window_list = list(set(openlist) - set(olderlist))
+        # Step 7: 視窗調整
+        try:
+            if account_group in ["2", "3"]:
+                if i == 0:
+                    now_window_name.moveTo(int(screen_width/25), int(screen_height/25))
+                elif i == 1:
+                    now_window_name.moveTo(int(screen_width/25 + now_window_name.width), int(screen_height/25))
+                elif i == 2:
+                    now_window_name.moveTo(int(screen_width/25), int(screen_height/25 + now_window_name.height))
+                elif i == 3:
+                    now_window_name.moveTo(int(screen_width/25 + now_window_name.width), int(screen_height/25 + now_window_name.height))
+            now_window_name.minimize()
+        except Exception as e:
+            print(f"⚠️ 移動視窗失敗: {e}")
+        time.sleep(2)
+        account_index += 1
 
-            openlist = list(set(openlist))
-            print(f'openlist = {openlist}')
-
-            olderlist = copy.deepcopy(openlist)
-            print(f'olderlist = {olderlist}')
-
-            print(f'now_window_list = {now_window_list}')
-            now_window_name = gw.getWindowsWithTitle(now_window_list[0])[0]
-
-            pydirectinput.keyDown("alt")    
-            pydirectinput.press("r")
-            pydirectinput.keyUp("alt")
-            time.sleep(2)
-
-            # 交易密碼
-            if data[account_index]['trade_password'] != "":
-                now_image = pyautogui.screenshot()
-                for temp in data[0]['trade_password']:                    
-                    x, y = position_return(now_image, os.path.join(dirname, "image/" + str(temp) + ".png"), 3, 3)
-                    mouseclick()
-                    time.sleep(1)
-                x, y = position_return(now_image, os.path.join(dirname, "image/check.png"), 3, 3)
-                mouseclick()
-                time.sleep(4)
-            
-            # 切換頁面
-            # 截圖
-            shot = pyautogui.screenshot(region=[now_window_name.left, now_window_name.top, now_window_name.width, now_window_name.height]) # x,y,w,h
-            # 滑鼠要移動到的位置  
-            x, y = position_return(shot, os.path.join(dirname, "image/attackpage1.png"))
-            if all(item is None for item in [x, y]):
-                x, y = position_return(pyautogui.screenshot(), os.path.join(dirname, "image/attackpage1.png"))
-            # x += int(now_window_name.left)
-            # y += int(now_window_name.top)
-            pyautogui.moveTo(x, y)
-            time.sleep(2)
-            mouseclick()
-            
-            # 自動攻擊開啟
-            # 滑鼠要移動到的位置
-            x, y = position_return(shot, os.path.join(dirname, "image/autoattack.png"))
-            if all(item is None for item in [x, y]):
-                x, y = position_return(pyautogui.screenshot(), os.path.join(dirname, "image/autoattack.png"))
-            # x += int(now_window_name.left)
-            # y += int(now_window_name.top)
-            pyautogui.moveTo(x, y)
-            time.sleep(2)
-            mouseclick()
-
-            pydirectinput.keyDown("alt")    
-            pydirectinput.press("r")
-            pydirectinput.keyUp("alt")        
-            time.sleep(2)
-
-            # 移動視窗
-            try:
-                if (account_group.__eq__("2") or account_group.__eq__("3")):
-                    if i==0:
-                        now_window_name.moveTo(int(screen_width/25), int(screen_height/25))
-                    elif i==1:
-                        now_window_name.moveTo(int(screen_width/25 + now_window_name.width), int(screen_height/25))
-                    elif i==2:
-                        now_window_name.moveTo(int(screen_width/25), int(screen_height/25 + now_window_name.height))
-                    elif i==3:
-                        now_window_name.moveTo(int(screen_width/25 + now_window_name.width), int(screen_height/25 + now_window_name.height))           
-
-                # 縮小當前視窗
-                now_window_name.minimize()
-            except TypeError:
-                print('型別發生錯誤')
-            except NameError:
-                print('使用沒有被定義的對象')
-            except Exception:
-                print('不知道怎麼了，反正發生錯誤惹')
-
-            time.sleep(2)
-            account_index+=1
-            i+=1
-
-        empty_list()
-
+    empty_list()
+  
 def get_mouse_pos():
     mouse_position.config(text='滑鼠現在位置: {}, {}'.format(*root.winfo_pointerxy()))
     root.after(100, get_mouse_pos)
@@ -333,16 +283,9 @@ def refresh():
     alltitles = gw.getAllTitles()
 
     myrefreshlist.delete(0, tk.END)
-
-    len_max = 0
     for t in alltitles:
         if "天使之戀Online - " in t:
-            print(f'now window = {t}')            
             myrefreshlist.insert(tk.END, t)
-
-            if len(t) > len_max:
-                len_max = len(t)
-    
     myrefreshlist.config(width=0)
     myrefreshlist.select_set(0)
 
